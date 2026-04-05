@@ -83,7 +83,7 @@ live_map, tournament_started = get_live_data()
 
 # --- 4. ENTRANCE GATE ---
 if not st.session_state.auth:
-    st.title("⛳️ MSBA Masters Pool")
+    st.title("⛳️ MSBA Masters Pool 470511")
     col1, col2 = st.columns(2)
     with col1:
         st.write("### Login")
@@ -97,7 +97,7 @@ if not st.session_state.auth:
             else: st.error("Invalid Name or PIN.")
     with col2:
         st.write("### New Entry")
-        s_name = st.text_input("Name")
+        s_name = st.text_input("Full Name")
         s_pin = st.text_input("4-Digit PIN", type="password", max_chars=4)
         if st.button("Sign Up"):
             if s_name and s_pin:
