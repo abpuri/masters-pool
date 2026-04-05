@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 # --- 1. CONFIG & TIERS ---
 st.set_page_config(page_title="MSBA Masters Pool 2026", layout="wide")
@@ -14,19 +14,46 @@ TIERS = {
     "Tier 4": ["Adam Scott", "Max Homa", "Cameron Smith", "Sepp Straka", "Sam Burns", "Daniel Berger", "Marco Penge", "Gary Woodland", "Sungjae Im", "Wyndham Clark"],
     "Tier 5": ["J.J. Spaun", "Jacob Bridgeman", "Harris English", "Dustin Johnson", "Alexander Noren", "Matthew McCarty", "Sergio Garcia", "Maverick McNealy", "Ryan Gerard", "Keegan Bradley"],
     "Tier 6": [
-        "Kurt Kitayama", "Nicolai Hojgaard", "Ryan Fox", "Aaron Rai", "Harry Hall", "John Keefer", 
-        "Rasmus Neergaard-Petersen", "Tom McKibbin", "Sam Stevens", "Brian Harman", "Rasmus Hojgaard", 
-        "Carlos Ortiz", "Nicolas Echavarria", "Andrew Novak", "Michael Kim", "Casey Jarvis", 
-        "Aldrich Potgieter", "Max Greyserman", "Nick Taylor", "Hao-Tong Li", "Bubba Watson", 
-        "Kristoffer Reitan", "Sami Valimaki", "Davis Riley", "Charl Schwartzel", "Michael Brennan", 
-        "Brian Campbell", "Zach Johnson", "Angel Cabrera", "Danny Willett", "Fred Couples", 
-        "Mike Weir", "Vijay Singh", "Jose Maria Olazabal", "Naoyuki Kataoka", "Brandon Holtz", 
+        "Kurt Kitayama", "Nicolai Hojgaard", "Ryan Fox", "Aaron Rai", "Harry Hall", "John Keefer",
+        "Rasmus Neergaard-Petersen", "Tom McKibbin", "Sam Stevens", "Brian Harman", "Rasmus Hojgaard",
+        "Carlos Ortiz", "Nicolas Echavarria", "Andrew Novak", "Michael Kim", "Casey Jarvis",
+        "Aldrich Potgieter", "Max Greyserman", "Nick Taylor", "Hao-Tong Li", "Bubba Watson",
+        "Kristoffer Reitan", "Sami Valimaki", "Davis Riley", "Charl Schwartzel", "Michael Brennan",
+        "Brian Campbell", "Zach Johnson", "Angel Cabrera", "Danny Willett", "Fred Couples",
+        "Mike Weir", "Vijay Singh", "Jose Maria Olazabal", "Naoyuki Kataoka", "Brandon Holtz",
         "Ethan Fang", "Fifa Laopakdee", "Jackson Herrington", "Mason Howell", "Mateo Pulcini",
         "WITHDRAWN - Phil Mickelson"
     ]
 }
 
-# --- 2. LIVE DATA ENGINE ---
+SHEET_ID = "1JuPu9bQG3tSNPvPb8DikqSTvZK4GxNoZPKSB6qvTs28"
+
+# --- 2. GOOGLE SHEETS CONNECTION ---
+@st.cache_resource
+def get_sheet():
+    import json
+    creds_dict = json.loads(st.secrets["gcp_service_account_json"])
+    creds = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    client = gspread.authorize(creds)
+    return client.open_by_key(SHEET_ID).worksheet("Picks")
+
+def get_db():
+    try:
+        sheet = get_sheet()
+        data = sheet.get_all_records()
+        return pd.DataFrame(data) if data else pd.DataFrame(columns=["Name", "PIN", "T1", "T2", "T3", "T4", "T5", "T6"])
+    except:
+        return pd.DataFrame(columns=["Name", "PIN", "T1", "T2", "T3", "T4", "T5", "T6"])
+
+def save_db(df):
+    sheet = get_sheet()
+    sheet.clear()
+    sheet.update([df.columns.tolist()] + df.values.tolist())
+
+# --- 3. LIVE DATA ENGINE ---
 @st.cache_data(ttl=300)
 def get_live_data():
     url = "https://www.masters.com/en_US/scores/feeds/2026/scores.json"
@@ -48,16 +75,6 @@ def get_live_data():
     except:
         all_names = [n for t in TIERS.values() for n in t]
         return {name: 0 for name in all_names}, False
-
-# --- 3. DATABASE CONNECTION ---
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-def get_db():
-    try:
-        # Pulls fresh data from your Google Sheet
-        return conn.read(worksheet="Picks", ttl=0)
-    except:
-        return pd.DataFrame(columns=["Name", "PIN", "T1", "T2", "T3", "T4", "T5", "T6"])
 
 if 'auth' not in st.session_state: st.session_state.auth = False
 if 'user' not in st.session_state: st.session_state.user = None
@@ -102,7 +119,7 @@ with st.container():
     st.markdown("### 📝 Rules\n**Best 4 of 6 count.** Tiebreaker: Best individual score. **Cuts/WD = 80.**")
 st.write("---")
 
-# --- 6. WINDOW: LEADERBOARD ---
+# --- 6. LEADERBOARD ---
 if page == "Leaderboard":
     st.header("🏆 Live Leaderboard")
     db = get_db()
@@ -125,7 +142,7 @@ if page == "Leaderboard":
             leaderboard_df = pd.DataFrame(results).sort_values("sort_key")
             st.write(leaderboard_df[['Team Name', 'Cumulative', 'Players']].to_html(escape=False, index=False), unsafe_allow_html=True)
 
-# --- 7. WINDOW: SELECT / MANAGE TEAM ---
+# --- 7. SELECT / MANAGE TEAM ---
 else:
     st.header("🏌️ Select / Manage Team")
     db = get_db()
@@ -144,8 +161,12 @@ else:
             if st.form_submit_button("Lock in My Team"):
                 current_db = get_db()
                 pin = existing['PIN'] if existing is not None else st.session_state.get('new_pin', '0000')
-                new_row = pd.DataFrame([[st.session_state.user, str(pin)] + picks], columns=["Name", "PIN", "T1", "T2", "T3", "T4", "T5", "T6"])
-                if not current_db.empty: current_db = current_db[current_db['Name'] != st.session_state.user]
+                new_row = pd.DataFrame([[st.session_state.user, str(pin)] + picks],
+                                       columns=["Name", "PIN", "T1", "T2", "T3", "T4", "T5", "T6"])
+                if not current_db.empty:
+                    current_db = current_db[current_db['Name'] != st.session_state.user]
                 updated_db = pd.concat([current_db, new_row], ignore_index=True)
-                conn.update(worksheet="Picks", data=updated_db)
-                st.success("Team saved!"); st.cache_data.clear(); st.rerun()
+                save_db(updated_db)
+                st.success("Team saved!")
+                st.cache_data.clear()
+                st.rerun()
