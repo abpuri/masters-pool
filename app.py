@@ -66,7 +66,6 @@ if 'user' not in st.session_state: st.session_state.user = None
 
 live_map, tournament_started = get_live_data()
 
-tournament_started = True
 
 # --- 4. ENTRANCE GATE ---
 if not st.session_state.auth:
