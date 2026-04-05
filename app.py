@@ -116,7 +116,7 @@ if st.sidebar.button("Logout"):
     st.rerun()
 
 with st.container():
-    st.markdown("### 📝 Rules\n**Best 4 of 6 count.** Tiebreaker: Best individual score. **Cuts/WD = 80.**")
+    st.markdown("### 📝 Rules\n**Pick one player per tier (based on OWGR). We'll keep the best 4 of 6 and whoever has the lowest cumulative score at the end wins.** Tiebreaker: Best individual score. **Cuts/WD = 80 each Sat/Sun if they're in your top 4.**")
 st.write("---")
 
 # --- 6. LEADERBOARD ---
