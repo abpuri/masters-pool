@@ -5,3 +5,5 @@ gspread
 google-auth
 st-gsheets-connection
 pytz
+beautifulsoup4
+lxml
