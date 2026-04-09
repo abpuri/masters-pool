@@ -58,33 +58,39 @@ def save_db(df):
 def get_live_data():
     from datetime import datetime
     import pytz
+    import re
     et = pytz.timezone('America/New_York')
     now = datetime.now(et)
-    # Round 1 tee times started 7:40 AM ET April 9
     is_started = now >= et.localize(datetime(2026, 4, 9, 7, 40))
 
-    url = "https://www.masters.com/en_US/scores/feeds/2026/scores.json"
     try:
-        r = requests.get(url, timeout=10, headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
-        data = r.json()
+        from bs4 import BeautifulSoup
+        r = requests.get(
+            "https://www.masters.com/en_US/scores/index.html",
+            timeout=10,
+            headers={"User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache"}
+        )
+        soup = BeautifulSoup(r.text, 'html.parser')
         players = {}
-        for p in data['data']['player']:
-            name = p.get('full_name', '')
-            topar = p.get('topar', '')
-            status = p.get('status', '')
-            if status in ['C', 'W', 'WD'] or (isinstance(topar, str) and 'cut' in topar.lower()):
-                val = 80
-            elif topar in [None, '', '-']:
-                val = 0
-            elif topar == 'E':
-                val = 0
-            else:
-                try:
-                    val = int(topar)
-                except:
-                    val = 0
-            if name:
-                players[name] = val
+        # Masters leaderboard rows have class 'player-row' or similar
+        rows = soup.find_all('tr', class_=re.compile(r'player'))
+        for row in rows:
+            cells = row.find_all('td')
+            if len(cells) >= 4:
+                name_cell = row.find(class_=re.compile(r'name|player-name'))
+                score_cell = row.find(class_=re.compile(r'topar|total-score|score'))
+                if name_cell and score_cell:
+                    name = name_cell.get_text(strip=True)
+                    score_text = score_cell.get_text(strip=True)
+                    if score_text in ['E', '', '-', '--']:
+                        val = 0
+                    else:
+                        try:
+                            val = int(score_text.replace('+', ''))
+                        except:
+                            val = 0
+                    if name:
+                        players[name] = val
         return players, is_started
     except:
         all_names = [n for t in TIERS.values() for n in t]
