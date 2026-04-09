@@ -64,25 +64,38 @@ def get_live_data():
 
     try:
         r = requests.get(
-            "https://feeds.datagolf.com/preds/in-play?tour=pga&dead_heat=no&odds_format=percent&file_format=json",
-            timeout=10,
-            headers={"User-Agent": "Mozilla/5.0"}
+            "https://live-golf-data.p.rapidapi.com/leaderboard",
+            headers={
+                "x-rapidapi-host": "live-golf-data.p.rapidapi.com",
+                "x-rapidapi-key": st.secrets["rapidapi_key"]
+            },
+            params={"orgId": "1", "tournId": "014", "year": "2026", "roundId": "1"},
+            timeout=10
         )
         data = r.json()
         players = {}
-        for p in data.get('data', []):
-            name = p.get('player_name', '')
-            # DataGolf uses cumulative score relative to par
-            score = p.get('current_score', None)
-            if score is None:
+        for row in data.get('leaderboardRows', []):
+            first = row.get('firstName', '')
+            last = row.get('lastName', '')
+            name = f"{first} {last}".strip()
+            status = row.get('status', '')
+            total = row.get('total', '0')
+
+            if status in ['cut', 'wd', 'dq']:
+                val = 80
+            elif total in [None, '', 'E']:
                 val = 0
             else:
                 try:
-                    val = int(score)
+                    val = int(total)
                 except:
                     val = 0
             if name:
                 players[name] = val
+
+        if data.get('roundStatus') in ['In Progress', 'Complete', 'Official']:
+            is_started = True
+
         return players, is_started
     except:
         all_names = [n for t in TIERS.values() for n in t]
