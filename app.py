@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
+import json
 
 # --- 1. CONFIG & TIERS ---
 st.set_page_config(page_title="MSBA Masters Pool 2026", layout="wide")
@@ -31,7 +32,6 @@ SHEET_ID = "1JuPu9bQG3tSNPvPb8DikqSTvZK4GxNoZPKSB6qvTs28"
 # --- 2. GOOGLE SHEETS CONNECTION ---
 @st.cache_resource
 def get_sheet():
-    import json
     creds_dict = json.loads(st.secrets["gcp_service_account_json"])
     creds = Credentials.from_service_account_info(
         creds_dict,
@@ -53,35 +53,48 @@ def save_db(df):
     sheet.clear()
     sheet.update([df.columns.tolist()] + df.values.tolist())
 
-# --- 3. LIVE DATA ENGINE ---
-@st.cache_data(ttl=300)
+# --- 3. LIVE DATA ENGINE (ESPN) ---
+@st.cache_data(ttl=60)
 def get_live_data():
-    url = "https://www.masters.com/en_US/scores/feeds/2026/scores.json"
+    url = "https://site.api.espn.com/apis/site/v2/sports/golf/leaderboard?league=pga&event=401703509"
     try:
         r = requests.get(url, timeout=5)
         data = r.json()
-        is_started = any(p.get('thru') not in [None, '', '0', '-', 'Not Started'] for p in data['player'])
         players = {}
-        for p in data['player']:
-            name = p.get('full_name')
-            score_str = str(p.get('topar', '0'))
-            if score_str == 'E': val = 0
-            elif "cut" in score_str.lower() or p.get('status') in ['C', 'W', 'WD']: val = 80
+        is_started = False
+        competitors = data['events'][0]['competitions'][0]['competitors']
+        for p in competitors:
+            name = p.get('athlete', {}).get('displayName', '')
+            status_state = p.get('status', {}).get('type', {}).get('state', '')
+            status_id = p.get('status', {}).get('type', {}).get('id', '')
+            score_str = p.get('score', {}).get('displayValue', '0')
+            if status_state in ['in', 'post']:
+                is_started = True
+            if status_id in ['cut', 'wd', 'withdrew']:
+                val = 80
+            elif score_str == 'E':
+                val = 0
             else:
-                try: val = int(score_str)
-                except: val = 0
-            players[name] = val
+                try:
+                    val = int(score_str)
+                except:
+                    val = 0
+            if name:
+                players[name] = val
         return players, is_started
     except:
         all_names = [n for t in TIERS.values() for n in t]
         return {name: 0 for name in all_names}, False
 
-if 'auth' not in st.session_state: st.session_state.auth = False
-if 'user' not in st.session_state: st.session_state.user = None
+# --- 4. SESSION STATE ---
+if 'auth' not in st.session_state:
+    st.session_state.auth = False
+if 'user' not in st.session_state:
+    st.session_state.user = None
 
 live_map, tournament_started = get_live_data()
 
-# --- 4. ENTRANCE GATE ---
+# --- 5. ENTRANCE GATE ---
 if not st.session_state.auth:
     st.title("⛳️ MSBA Masters Pool 470511")
     col1, col2 = st.columns(2)
@@ -94,7 +107,8 @@ if not st.session_state.auth:
             if not db.empty and not db[(db['Name'] == l_name) & (db['PIN'].astype(str) == str(l_pin))].empty:
                 st.session_state.auth, st.session_state.user = True, l_name
                 st.rerun()
-            else: st.error("Invalid Name or PIN.")
+            else:
+                st.error("Invalid Name or PIN.")
     with col2:
         st.write("### New Entry")
         s_name = st.text_input("Full Name")
@@ -102,30 +116,35 @@ if not st.session_state.auth:
         if st.button("Sign Up"):
             if s_name and s_pin:
                 db = get_db()
-                if not db.empty and s_name in db['Name'].values: st.error("Name taken.")
+                if not db.empty and s_name in db['Name'].values:
+                    st.error("Name taken.")
                 else:
-                    st.session_state.auth, st.session_state.user, st.session_state.new_pin = True, s_name, str(s_pin)
+                    st.session_state.auth = True
+                    st.session_state.user = s_name
+                    st.session_state.new_pin = str(s_pin)
                     st.rerun()
     st.stop()
 
-# --- 5. LOGGED IN UI ---
+# --- 6. LOGGED IN UI ---
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go to:", ["Leaderboard", "Select / Manage Team"])
 if st.sidebar.button("Logout"):
-    st.session_state.auth, st.session_state.user = False, None
+    st.session_state.auth = False
+    st.session_state.user = None
     st.rerun()
 
 with st.container():
     st.markdown("### 📝 Rules\n**Pick one player per tier (based on OWGR). We'll keep the best 4 of 6 and whoever has the lowest cumulative score at the end wins.** Tiebreaker: Best individual score. **Cuts/WD = 80 each Sat/Sun if they're in your top 4.**")
 st.write("---")
 
-# --- 6. LEADERBOARD ---
+# --- 7. LEADERBOARD ---
 if page == "Leaderboard":
     st.header("🏆 Live Leaderboard")
     db = get_db()
     if not tournament_started:
         st.info("Tournament hasn't started. Showing entries.")
-        if not db.empty: st.table(db[['Name']].rename(columns={'Name': 'Confirmed Entrants'}))
+        if not db.empty:
+            st.table(db[['Name']].rename(columns={'Name': 'Confirmed Entrants'}))
     else:
         results = []
         if not db.empty:
@@ -136,33 +155,49 @@ if page == "Leaderboard":
                 score_cells = []
                 for i, (score, name) in enumerate(player_data):
                     fmt = f"{score:+}" if score != 0 else "E"
-                    if i >= 4: score_cells.append(f'<span style="color: #A9A9A9;">{name} ({fmt})</span>')
-                    else: score_cells.append(f"<b>{name} ({fmt})</b>" if i == 0 else f"{name} ({fmt})")
-                results.append({"Team Name": f"<b>{row['Name']}</b>", "Cumulative": f"<b>{best_4_total:+}</b>", "Players": " | ".join(score_cells), "sort_key": (best_4_total, *[d[0] for d in player_data])})
+                    if i >= 4:
+                        score_cells.append(f'<span style="color: #A9A9A9;">{name} ({fmt})</span>')
+                    else:
+                        score_cells.append(f"<b>{name} ({fmt})</b>" if i == 0 else f"{name} ({fmt})")
+                results.append({
+                    "Team Name": f"<b>{row['Name']}</b>",
+                    "Cumulative": f"<b>{best_4_total:+}</b>",
+                    "Players": " | ".join(score_cells),
+                    "sort_key": (best_4_total, *[d[0] for d in player_data])
+                })
             leaderboard_df = pd.DataFrame(results).sort_values("sort_key")
             st.write(leaderboard_df[['Team Name', 'Cumulative', 'Players']].to_html(escape=False, index=False), unsafe_allow_html=True)
 
-# --- 7. SELECT / MANAGE TEAM ---
+# --- 8. SELECT / MANAGE TEAM ---
 else:
     st.header("🏌️ Select / Manage Team")
     db = get_db()
     if tournament_started:
-        st.error("🔒 Entries locked.")
-        u_picks = db[db['Name'] == st.session_state.user].iloc[0]
-        for i in range(1, 7): st.write(f"**Tier {i}:** {u_picks[f'T{i}']}")
+        st.error("🔒 Entries locked. Tournament is underway.")
+        if not db.empty and st.session_state.user in db['Name'].values:
+            u_picks = db[db['Name'] == st.session_state.user].iloc[0]
+            for i in range(1, 7):
+                st.write(f"**Tier {i}:** {u_picks[f'T{i}']}")
     else:
         existing = db[db['Name'] == st.session_state.user].iloc[0] if (not db.empty and st.session_state.user in db['Name'].values) else None
         with st.form("team_selection"):
             picks = []
             for i in range(1, 7):
                 t_key = f"Tier {i}"
-                idx = TIERS[t_key].index(existing[f'T{i}']) if existing is not None else 0
-                picks.append(st.radio(f"### {t_key}", TIERS[t_key], index=idx))
+                default_idx = 0
+                if existing is not None:
+                    try:
+                        default_idx = TIERS[t_key].index(existing[f'T{i}'])
+                    except ValueError:
+                        default_idx = 0
+                picks.append(st.radio(f"### {t_key}", TIERS[t_key], index=default_idx))
             if st.form_submit_button("Lock in My Team"):
                 current_db = get_db()
                 pin = existing['PIN'] if existing is not None else st.session_state.get('new_pin', '0000')
-                new_row = pd.DataFrame([[st.session_state.user, str(pin)] + picks],
-                                       columns=["Name", "PIN", "T1", "T2", "T3", "T4", "T5", "T6"])
+                new_row = pd.DataFrame(
+                    [[st.session_state.user, str(pin)] + picks],
+                    columns=["Name", "PIN", "T1", "T2", "T3", "T4", "T5", "T6"]
+                )
                 if not current_db.empty:
                     current_db = current_db[current_db['Name'] != st.session_state.user]
                 updated_db = pd.concat([current_db, new_row], ignore_index=True)
