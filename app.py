@@ -58,39 +58,31 @@ def save_db(df):
 def get_live_data():
     from datetime import datetime
     import pytz
-    import re
     et = pytz.timezone('America/New_York')
     now = datetime.now(et)
     is_started = now >= et.localize(datetime(2026, 4, 9, 7, 40))
 
     try:
-        from bs4 import BeautifulSoup
         r = requests.get(
-            "https://www.masters.com/en_US/scores/index.html",
+            "https://feeds.datagolf.com/preds/in-play?tour=pga&dead_heat=no&odds_format=percent&file_format=json",
             timeout=10,
-            headers={"User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache"}
+            headers={"User-Agent": "Mozilla/5.0"}
         )
-        soup = BeautifulSoup(r.text, 'html.parser')
+        data = r.json()
         players = {}
-        # Masters leaderboard rows have class 'player-row' or similar
-        rows = soup.find_all('tr', class_=re.compile(r'player'))
-        for row in rows:
-            cells = row.find_all('td')
-            if len(cells) >= 4:
-                name_cell = row.find(class_=re.compile(r'name|player-name'))
-                score_cell = row.find(class_=re.compile(r'topar|total-score|score'))
-                if name_cell and score_cell:
-                    name = name_cell.get_text(strip=True)
-                    score_text = score_cell.get_text(strip=True)
-                    if score_text in ['E', '', '-', '--']:
-                        val = 0
-                    else:
-                        try:
-                            val = int(score_text.replace('+', ''))
-                        except:
-                            val = 0
-                    if name:
-                        players[name] = val
+        for p in data.get('data', []):
+            name = p.get('player_name', '')
+            # DataGolf uses cumulative score relative to par
+            score = p.get('current_score', None)
+            if score is None:
+                val = 0
+            else:
+                try:
+                    val = int(score)
+                except:
+                    val = 0
+            if name:
+                players[name] = val
         return players, is_started
     except:
         all_names = [n for t in TIERS.values() for n in t]
