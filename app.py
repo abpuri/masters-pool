@@ -56,33 +56,40 @@ def save_db(df):
 # --- 3. LIVE DATA ENGINE (ESPN) ---
 @st.cache_data(ttl=60)
 def get_live_data():
-    url = "https://site.api.espn.com/apis/site/v2/sports/golf/leaderboard?league=pga&event=401811941"
+    url = "https://www.masters.com/en_US/scores/feeds/2026/scores.json"
     try:
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, timeout=10, headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
         data = r.json()
         players = {}
         is_started = False
-        competitors = data['events'][0]['competitions'][0]['competitors']
-        for p in competitors:
-            name = p.get('athlete', {}).get('displayName', '')
-            status_state = p.get('status', {}).get('type', {}).get('state', '')
-            status_id = p.get('status', {}).get('type', {}).get('id', '')
-            score_str = p.get('score', {}).get('displayValue', '0')
-            if status_state in ['in', 'post']:
+        for p in data['data']['player']:
+            name = p.get('full_name', '')
+            topar = p.get('topar', '')
+            status = p.get('status', '')
+            thru = p.get('thru', '')
+
+            # Detect if tournament has started
+            if thru not in [None, '', '0', '-']:
                 is_started = True
-            if status_id in ['cut', 'wd', 'withdrew']:
+
+            # Score parsing
+            if status in ['C', 'W', 'WD'] or (isinstance(topar, str) and 'cut' in topar.lower()):
                 val = 80
-            elif score_str == 'E':
+            elif topar in [None, '', '-']:
+                val = 0
+            elif topar == 'E':
                 val = 0
             else:
                 try:
-                    val = int(score_str)
+                    val = int(topar)
                 except:
                     val = 0
+
             if name:
                 players[name] = val
+
         return players, is_started
-    except:
+    except Exception as e:
         all_names = [n for t in TIERS.values() for n in t]
         return {name: 0 for name in all_names}, False
 
