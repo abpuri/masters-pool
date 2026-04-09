@@ -56,23 +56,22 @@ def save_db(df):
 # --- 3. LIVE DATA ENGINE (ESPN) ---
 @st.cache_data(ttl=60)
 def get_live_data():
+    from datetime import datetime
+    import pytz
+    et = pytz.timezone('America/New_York')
+    now = datetime.now(et)
+    # Round 1 tee times started 7:40 AM ET April 9
+    is_started = now >= et.localize(datetime(2026, 4, 9, 7, 40))
+
     url = "https://www.masters.com/en_US/scores/feeds/2026/scores.json"
     try:
         r = requests.get(url, timeout=10, headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
         data = r.json()
         players = {}
-        is_started = False
         for p in data['data']['player']:
             name = p.get('full_name', '')
             topar = p.get('topar', '')
             status = p.get('status', '')
-            thru = p.get('thru', '')
-
-            # Detect if tournament has started
-            if thru not in [None, '', '0', '-']:
-                is_started = True
-
-            # Score parsing
             if status in ['C', 'W', 'WD'] or (isinstance(topar, str) and 'cut' in topar.lower()):
                 val = 80
             elif topar in [None, '', '-']:
@@ -84,14 +83,12 @@ def get_live_data():
                     val = int(topar)
                 except:
                     val = 0
-
             if name:
                 players[name] = val
-
         return players, is_started
-    except Exception as e:
+    except:
         all_names = [n for t in TIERS.values() for n in t]
-        return {name: 0 for name in all_names}, False
+        return {name: 0 for name in all_names}, is_started
 
 # --- 4. SESSION STATE ---
 if 'auth' not in st.session_state:
